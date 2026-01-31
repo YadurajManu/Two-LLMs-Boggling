@@ -14,7 +14,9 @@ const CONFIG = {
     },
     temperature: 0.7,
     maxTokens: -1,
-    messageDelay: 1500,
+    messageDelay: 500, // Reduced since we wait for speech to finish
+    ttsEnabled: true,
+    ttsRate: 1.0,
 };
 
 // AI Personalities
@@ -78,6 +80,84 @@ class ConversationState {
 }
 
 const state = new ConversationState();
+
+// ========================================
+// Text-to-Speech System
+// ========================================
+let voices = [];
+let ai1Voice = null;
+let ai2Voice = null;
+
+// Load available voices
+function loadVoices() {
+    voices = speechSynthesis.getVoices();
+
+    // Try to find distinct voices for each AI
+    // Alex (AI1) - prefer a male voice
+    // Jordan (AI2) - prefer a different voice
+
+    const englishVoices = voices.filter(v => v.lang.startsWith('en'));
+
+    if (englishVoices.length >= 2) {
+        ai1Voice = englishVoices[0];
+        ai2Voice = englishVoices[1];
+    } else if (englishVoices.length === 1) {
+        ai1Voice = englishVoices[0];
+        ai2Voice = englishVoices[0];
+    } else if (voices.length >= 2) {
+        ai1Voice = voices[0];
+        ai2Voice = voices[1];
+    } else if (voices.length === 1) {
+        ai1Voice = voices[0];
+        ai2Voice = voices[0];
+    }
+
+    console.log('🔊 TTS Voices loaded:', voices.length);
+    if (ai1Voice) console.log(`   Alex voice: ${ai1Voice.name}`);
+    if (ai2Voice) console.log(`   Jordan voice: ${ai2Voice.name}`);
+}
+
+// Load voices when available
+if (speechSynthesis.onvoiceschanged !== undefined) {
+    speechSynthesis.onvoiceschanged = loadVoices;
+}
+loadVoices();
+
+// Speak text with the appropriate voice
+function speak(text, aiId) {
+    return new Promise((resolve) => {
+        if (!CONFIG.ttsEnabled || !text) {
+            resolve();
+            return;
+        }
+
+        // Cancel any ongoing speech
+        speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(text);
+
+        // Set voice based on AI
+        if (aiId === 'ai1' && ai1Voice) {
+            utterance.voice = ai1Voice;
+            utterance.pitch = 0.9; // Slightly lower pitch for Alex
+            utterance.rate = CONFIG.ttsRate;
+        } else if (aiId === 'ai2' && ai2Voice) {
+            utterance.voice = ai2Voice;
+            utterance.pitch = 0.9; // Slightly higher pitch for Jordan
+            utterance.rate = CONFIG.ttsRate * 1.05; // Slightly faster
+        }
+
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
+
+        speechSynthesis.speak(utterance);
+    });
+}
+
+// Stop speaking
+function stopSpeaking() {
+    speechSynthesis.cancel();
+}
 
 // ========================================
 // DOM Elements
@@ -332,6 +412,9 @@ async function runConversationLoop() {
                 timestamp: Date.now()
             });
 
+            // Speak the message and wait for it to finish
+            await speak(response, currentAI);
+
             state.currentTurn = otherAI;
 
             await sleep(CONFIG.messageDelay);
@@ -431,6 +514,10 @@ function stopConversation() {
         clearInterval(state.timerInterval);
         state.timerInterval = null;
     }
+
+    // Stop any ongoing speech
+    stopSpeaking();
+
     updateStatus('', 'Ready to Go');
     setAISideActive(null);
     updateButtonStates();
@@ -495,6 +582,11 @@ document.addEventListener('keydown', (e) => {
         case 'v':
             toggleView();
             break;
+        case 'm':
+            CONFIG.ttsEnabled = !CONFIG.ttsEnabled;
+            console.log(`🔊 TTS ${CONFIG.ttsEnabled ? 'Enabled' : 'Muted'}`);
+            if (!CONFIG.ttsEnabled) stopSpeaking();
+            break;
     }
 });
 
@@ -505,8 +597,10 @@ console.log('🔥 2 LLMs F*cking - Initialized');
 console.log(`📡 Endpoint: ${CONFIG.endpoint}`);
 console.log(`🧠 AI 1: ${CONFIG.models.ai1}`);
 console.log(`🎭 AI 2: ${CONFIG.models.ai2}`);
+console.log(`🔊 TTS: ${CONFIG.ttsEnabled ? 'Enabled' : 'Disabled'}`);
 console.log('');
 console.log('Keyboard shortcuts:');
 console.log('  SPACE - Start/Pause');
 console.log('  ESC   - Stop');
 console.log('  V     - Toggle View');
+console.log('  M     - Toggle TTS Mute');
